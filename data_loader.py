@@ -1,86 +1,118 @@
-# data_loader.py (Deployment-Ready Version)
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+# data_loader.py
 import pandas as pd
+import gspread
+from google.oauth2.service_account import Credentials
 import streamlit as st
-from collections import defaultdict
-import re
 
-SCOPE = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-CREDS_FILE = 'credentials.json'
-MASTER_SHEET_NAME = 'HockeyCurve_Master_Data'
-SHEET_NAMES = {
-    'profiles': 'Client_Profiles',
-    'details': 'Template_Details',
-    'campaigns': 'Template_Tags_and_Previews'
-}
-
-def _get_creds():
-    """
-    This function smartly gets credentials. It tries Streamlit's secrets first
-    (for cloud deployment) and falls back to the local JSON file.
-    """
-    try:
-        # For deployed app, use Streamlit's secrets management
-        creds_dict = st.secrets["gcp_service_account"]
-        return ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SCOPE)
-    except (FileNotFoundError, KeyError):
-        # For local development, use the credentials.json file
-        return ServiceAccountCredentials.from_json_keyfile_name(CREDS_FILE, SCOPE)
-
-@st.cache_resource(show_spinner="Initializing Assistant, please wait...")
-def load_and_process_data():
-    """
-    Loads all data using the smart credential handler and builds the index.
-    """
-    try:
-        creds = _get_creds()
-        client = gspread.authorize(creds)
-        spreadsheet = client.open(MASTER_SHEET_NAME)
-
-        profiles_sheet = spreadsheet.worksheet(SHEET_NAMES['profiles'])
-        details_sheet = spreadsheet.worksheet(SHEET_NAMES['details'])
-        campaigns_sheet = spreadsheet.worksheet(SHEET_NAMES['campaigns'])
-
-        profiles_df = pd.DataFrame(profiles_sheet.get_all_records())
-        templates_df = pd.DataFrame(details_sheet.get_all_records())
-        campaigns_df = pd.DataFrame(campaigns_sheet.get_all_records())
+class DataLoader:
+    def __init__(self):
+        self.gc = None
+        self.client_profiles = None
+        self.template_tags = None
+        self.template_details = None
         
-        # (The rest of the data processing logic remains the same)
-        master_df = pd.merge(templates_df, campaigns_df.drop_duplicates(subset=['template_name']), on='template_name', how='left')
+        # Configuration
+        self.SPREADSHEET_ID = "1WaY3H_T8rAtHvLSmJ_MvqVvzy5MEaEqLbdUxDeVh228"
         
-        if 'preview_url_y' in master_df.columns and 'preview_url_x' in master_df.columns:
-            master_df['preview_url'] = master_df['preview_url_y'].fillna(master_df['preview_url_x'])
-        elif 'preview_url_x' in master_df.columns:
-             master_df['preview_url'] = master_df['preview_url_x']
-        elif 'preview_url_y' in master_df.columns:
-             master_df['preview_url'] = master_df['preview_url_y']
-
-        def _clean_ctr(value):
-            if pd.isna(value) or value == '': return 0.0
-            try: return float(str(value).split('-')[0].replace('%', '').strip())
-            except (ValueError, TypeError): return 0.0
+    def authenticate_gspread(self, credentials_path=None):
+        """Authenticate with Google Sheets API"""
+        try:
+            scope = ['https://spreadsheets.google.com/feeds',
+                    'https://www.googleapis.com/auth/drive']
+            
+            if credentials_path:
+                # If using service account JSON file
+                creds = Credentials.from_service_account_file(credentials_path, scopes=scope)
+                self.gc = gspread.authorize(creds)
+            else:
+                # If using streamlit secrets
+                creds = Credentials.from_service_account_info(
+                    st.secrets["gcp_service_account"], scopes=scope
+                )
+                self.gc = gspread.authorize(creds)
+            return True
+        except Exception as e:
+            st.error(f"Authentication failed: {str(e)}")
+            return False
+    
+    def load_data(self):
+        """Load data from Google Sheets"""
+        try:
+            # Open the spreadsheet
+            spreadsheet = self.gc.open_by_key(self.SPREADSHEET_ID)
+            
+            # Load Client Profiles
+            client_sheet = spreadsheet.worksheet("Client_Profiles")
+            client_data = client_sheet.get_all_records()
+            self.client_profiles = pd.DataFrame(client_data)
+            
+            # Load Template Tags and Previews
+            template_tags_sheet = spreadsheet.worksheet("Template_Tags_and_Previews")
+            template_tags_data = template_tags_sheet.get_all_records()
+            self.template_tags = pd.DataFrame(template_tags_data)
+            
+            # Load Template Details
+            template_details_sheet = spreadsheet.worksheet("Template_Details")
+            template_details_data = template_details_sheet.get_all_records()
+            self.template_details = pd.DataFrame(template_details_data)
+            
+            # Basic data validation
+            self._validate_data()
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"Error loading data: {str(e)}")
+            return False
+    
+    def _validate_data(self):
+        """Validate that required columns exist in the data"""
+        # Check Client_Profiles columns
+        required_client_cols = ['client_type', 'keywords', 'domain_url', 'industry', 
+                               'business_niche', 'marketing_focus', 'relevant_keywords']
+        missing_client_cols = [col for col in required_client_cols if col not in self.client_profiles.columns]
+        if missing_client_cols:
+            st.warning(f"Missing columns in Client_Profiles: {missing_client_cols}")
         
-        master_df['avg_ctr'] = master_df['avg_ctr'].apply(_clean_ctr)
-        master_df.rename(columns={'avg_ctr': 'ctr_value'}, inplace=True)
-
-        master_df['searchable_text'] = (
-            master_df['template_name'].fillna('').str.lower() + ' ' +
-            master_df['description'].fillna('').str.lower() + ' ' +
-            master_df.get('campaign_name', '').fillna('').str.lower() + ' ' +
-            master_df.get('client_name', '').fillna('').str.lower()
-        )
+        # Check Template_Tags_and_Previews columns
+        required_template_tags_cols = ['campaign_name', 'client_name', 
+                                      'template_name']
+        missing_template_tags_cols = [col for col in required_template_tags_cols if col not in self.template_tags.columns]
+        if missing_template_tags_cols:
+            st.warning(f"Missing columns in Template_Tags_and_Previews: {missing_template_tags_cols}")
         
-        search_index = defaultdict(list)
-        for index, row in master_df.iterrows():
-            normalized_text = re.sub(r'[^a-z0-9\s]', '', row['searchable_text'])
-            unique_words = set(normalized_text.split())
-            for word in unique_words:
-                if word: search_index[word].append(index)
+        # Check Template_Details columns
+        required_template_details_cols = ['template_name', 'description', 'avg_ctr', 'preview_url']
+        missing_template_details_cols = [col for col in required_template_details_cols if col not in self.template_details.columns]
+        if missing_template_details_cols:
+            st.warning(f"Missing columns in Template_Details: {missing_template_details_cols}")
+    
+    def get_client_profiles(self):
+        """Return client profiles dataframe"""
+        return self.client_profiles
+    
+    def get_template_tags(self):
+        """Return template tags dataframe"""
+        return self.template_tags
+    
+    def get_template_details(self):
+        """Return template details dataframe"""
+        return self.template_details
+    
+    def refresh_data(self):
+        """Refresh data from Google Sheets"""
+        return self.load_data()
+    
+    def get_data_summary(self):
+        """Get summary of loaded data"""
+        if self.client_profiles is None or self.template_tags is None or self.template_details is None:
+            return "No data loaded"
         
-        print("Data loaded and definitive search index created!")
-        return master_df, profiles_df, search_index
-
-    except Exception as e:
-        st.error(f"An error occurred during data loading: {e}")
-        return None, None, None
+        summary = {
+            "client_profiles_count": len(self.client_profiles),
+            "template_tags_count": len(self.template_tags),
+            "template_details_count": len(self.template_details),
+            "unique_templates": len(self.template_details['template_name'].unique()) if 'template_name' in self.template_details.columns else 0,
+            "unique_clients": len(self.template_tags['client_name'].unique()) if 'client_name' in self.template_tags.columns else 0
+        }
+        return summary
