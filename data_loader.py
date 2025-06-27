@@ -20,16 +20,11 @@ class DataLoader:
             scope = ['https://spreadsheets.google.com/feeds',
                     'https://www.googleapis.com/auth/drive']
             
-            if credentials_path:
-                # If using service account JSON file
-                creds = Credentials.from_service_account_file(credentials_path, scopes=scope)
-                self.gc = gspread.authorize(creds)
-            else:
-                # If using streamlit secrets
-                creds = Credentials.from_service_account_info(
-                    st.secrets["gcp_service_account"], scopes=scope
-                )
-                self.gc = gspread.authorize(creds)
+            # Use Streamlit secrets when deployed
+            creds = Credentials.from_service_account_info(
+                st.secrets["gcp_service_account"], scopes=scope
+            )
+            self.gc = gspread.authorize(creds)
             return True
         except Exception as e:
             st.error(f"Authentication failed: {str(e)}")
@@ -67,52 +62,24 @@ class DataLoader:
     
     def _validate_data(self):
         """Validate that required columns exist in the data"""
-        # Check Client_Profiles columns
         required_client_cols = ['client_type', 'keywords', 'domain_url', 'industry', 
                                'business_niche', 'marketing_focus', 'relevant_keywords']
-        missing_client_cols = [col for col in required_client_cols if col not in self.client_profiles.columns]
-        if missing_client_cols:
-            st.warning(f"Missing columns in Client_Profiles: {missing_client_cols}")
-        
-        # Check Template_Tags_and_Previews columns
-        required_template_tags_cols = ['campaign_name', 'client_name', 
-                                      'template_name']
-        missing_template_tags_cols = [col for col in required_template_tags_cols if col not in self.template_tags.columns]
-        if missing_template_tags_cols:
-            st.warning(f"Missing columns in Template_Tags_and_Previews: {missing_template_tags_cols}")
-        
-        # Check Template_Details columns
-        required_template_details_cols = ['template_name', 'description', 'avg_ctr', 'preview_url']
-        missing_template_details_cols = [col for col in required_template_details_cols if col not in self.template_details.columns]
-        if missing_template_details_cols:
-            st.warning(f"Missing columns in Template_Details: {missing_template_details_cols}")
+        if not all(col in self.client_profiles.columns for col in required_client_cols):
+            st.warning("One or more required columns are missing in 'Client_Profiles'.")
+
+        required_tags_cols = ['campaign_name', 'client_name', 'template_name']
+        if not all(col in self.template_tags.columns for col in required_tags_cols):
+            st.warning("One or more required columns are missing in 'Template_Tags_and_Previews'.")
+
+        required_details_cols = ['template_name', 'description', 'avg_ctr', 'preview_url']
+        if not all(col in self.template_details.columns for col in required_details_cols):
+            st.warning("One or more required columns are missing in 'Template_Details'.")
     
     def get_client_profiles(self):
-        """Return client profiles dataframe"""
         return self.client_profiles
     
     def get_template_tags(self):
-        """Return template tags dataframe"""
         return self.template_tags
     
     def get_template_details(self):
-        """Return template details dataframe"""
         return self.template_details
-    
-    def refresh_data(self):
-        """Refresh data from Google Sheets"""
-        return self.load_data()
-    
-    def get_data_summary(self):
-        """Get summary of loaded data"""
-        if self.client_profiles is None or self.template_tags is None or self.template_details is None:
-            return "No data loaded"
-        
-        summary = {
-            "client_profiles_count": len(self.client_profiles),
-            "template_tags_count": len(self.template_tags),
-            "template_details_count": len(self.template_details),
-            "unique_templates": len(self.template_details['template_name'].unique()) if 'template_name' in self.template_details.columns else 0,
-            "unique_clients": len(self.template_tags['client_name'].unique()) if 'client_name' in self.template_tags.columns else 0
-        }
-        return summary

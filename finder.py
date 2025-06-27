@@ -30,25 +30,6 @@ class TemplateFinder:
         text = re.sub(r'\s+', ' ', text).strip()
         return text
     
-    def create_client_keyword_corpus(self):
-        """Create a comprehensive keyword corpus from client profiles"""
-        client_profiles = self.data_loader.get_client_profiles()
-        client_keywords = []
-        
-        for _, row in client_profiles.iterrows():
-            # Combine all keyword-related fields
-            keywords_text = ""
-            keyword_fields = ['keywords', 'domain_url', 'industry', 'business_niche', 
-                            'marketing_focus', 'relevant_keywords']
-            
-            for field in keyword_fields:
-                if field in row and pd.notna(row[field]):
-                    keywords_text += " " + str(row[field])
-            
-            client_keywords.append(self.preprocess_text(keywords_text))
-        
-        return client_keywords
-    
     def create_template_corpus(self):
         """Create template corpus by combining template details with client mappings"""
         template_details = self.data_loader.get_template_details()
@@ -206,6 +187,7 @@ class TemplateFinder:
                     'Description': template_detail['description'],
                     'Similarity Score': round(similarities[idx] * 100, 2),
                     'Open Preview': preview_url,
+                    'avg_ctr': template_detail.get('avg_ctr', 'N/A'),
                     'Associated Clients': ', '.join(template_info[idx]['associated_clients'])
                 })
         
